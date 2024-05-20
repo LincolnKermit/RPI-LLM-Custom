@@ -1,50 +1,85 @@
+from openai import OpenAI
+
+
 from gtts import gTTS
-import os, openai, pyaudio, torch
+import os, pyaudio, torch, io, pygame
 import speech_recognition as sr
+import uuid
+
+# Incase openai is not updated...
+os.system("openai migrate")
+
+openai_key = "API_KEY_HERE"
+
+# Initialize pygame mixer for audio playback
+pygame.mixer.init()
+os.system("clear")
 
 
-openai_key = "none"
+client = OpenAI(api_key=openai_key)
 
-
-# MAC OS : brew install portaudio
-# Ubuntu : sudo apt-get install python-pyaudio python3-pyaudio
-
-# Global
-# pip install pyaudio
-
-
-
-
-print("Initializing Speech Recognition...")
+# Initializing Speech Recognition
 r = sr.Recognizer()
-print("Fetching microphone names...")
-print(sr.Microphone.list_microphone_names())
 
-
-print("Initializing Microphone...")
-micro = sr.Microphone()
+# Initializing Microphone
+with sr.Microphone() as source:
+    r.adjust_for_ambient_noise(source)  # Adjust for ambient noise once at the start
 
 print("End of setup, ready to listen!")
 
+conversations = {}
+
+def play_tts(text):
+    tts = gTTS(text)
+    fp = io.BytesIO()
+    tts.write_to_fp(fp)
+    fp.seek(0)
+    pygame.mixer.music.load(fp, 'mp3')
+    pygame.mixer.music.play()
+    while pygame.mixer.music.get_busy():
+        pass
+
+def get_chat_response(user_input, chat_id):
+    global conversations
+    prompt = conversations.get(chat_id, "") + "\n" + user_input
+    response = client.completions.create(
+        model="gpt-3.5-turbo-0125",
+        prompt=prompt,
+        max_tokens=150,
+        temperature=0.7,
+        stop=None,
+        top_p=1,
+        frequency_penalty=0,
+        presence_penalty=0
+    )
+    answer = response.choices[0].text.strip()
+    conversations[chat_id] = conversations.get(chat_id, "") + "\nHuman: " + user_input + "\nAI: " + answer
+    return answer
+
+
 while True:
-    with micro as source:
-        tts = gTTS('Hello, I am your personnal assistant. How can I help you?')
+    play_tts('Hello, I am your personal assistant. How can I help you?')
+
+    with sr.Microphone() as source:
         print("Speak!")
         audio_data = r.listen(source)
         print("End!")
-    result = r.recognize_google(audio_data)
-    print (">", result)
-    tts = gTTS('Have you said, "' + result + '"?')
-    while result != "yes" or result != "exactly" or result != "True" or result != "of course":
-        with micro as source:
-            tts = gTTS('I am sorry that I am not able to understand you. Can you please repeat?')
-            print("Speak!")
-            audio_data = r.listen(source)
-            print("End!")
-        result = r.recognize_google(audio_data)
 
+    try:
+        result = r.recognize_google(audio_data, language='en-US')
+        print(f"You said: {result}")
+        if "exit" in result.lower():
+            break
 
+        # Generate a unique chat ID if it's a new conversation
+        chat_id = str(uuid.uuid4())
+        response_text = get_chat_response(result, chat_id)
+        play_tts(response_text)
+        print(response_text)
 
-# pip install openai
+    except sr.UnknownValueError:
+        play_tts("Sorry, I did not catch that. Could you please repeat?")
 
-# More coming...
+    except sr.RequestError as e:
+        print(f"Could not request results from Google Speech Recognition service; {e}")
+
